@@ -28,7 +28,7 @@ ROOT_DIR = os.path.abspath(
 )
 
 # ========================================
-# FILE HELPERS
+# HELPERS
 # ========================================
 
 def resolve_existing_path(
@@ -47,7 +47,7 @@ def resolve_existing_path(
     )
 
 # ========================================
-# RESOLVE GOOGLE AUTH FILES
+# RESOLVE AUTH FILES
 # ========================================
 
 def resolve_paths() -> Tuple[str, str]:
@@ -67,6 +67,11 @@ def resolve_paths() -> Tuple[str, str]:
         ""
     ).strip()
 
+    env_token_json = os.getenv(
+        "GOOGLE_TOKEN_JSON",
+        ""
+    ).strip()
+
     cwd = os.getcwd()
 
     parent_of_root = os.path.abspath(
@@ -74,26 +79,26 @@ def resolve_paths() -> Tuple[str, str]:
     )
 
     # ====================================
-    # HANDLE GOOGLE_CREDENTIALS_JSON ENV
+    # GOOGLE_CREDENTIALS_JSON SUPPORT
     # ====================================
 
     if env_credentials_json:
 
-        temp_file = tempfile.NamedTemporaryFile(
+        credentials_temp = tempfile.NamedTemporaryFile(
             delete=False,
             suffix=".json"
         )
 
-        temp_file.write(
+        credentials_temp.write(
             env_credentials_json.encode("utf-8")
         )
 
-        temp_file.close()
+        credentials_temp.close()
 
-        credentials_path = temp_file.name
+        credentials_path = credentials_temp.name
 
         print(
-            f"Using credentials from GOOGLE_CREDENTIALS_JSON env"
+            "Using credentials from GOOGLE_CREDENTIALS_JSON env"
         )
 
     else:
@@ -124,7 +129,32 @@ def resolve_paths() -> Tuple[str, str]:
         )
 
     # ====================================
-    # TOKEN PATH RESOLUTION
+    # GOOGLE_TOKEN_JSON SUPPORT
+    # ====================================
+
+    if env_token_json:
+
+        token_temp = tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".json"
+        )
+
+        token_temp.write(
+            env_token_json.encode("utf-8")
+        )
+
+        token_temp.close()
+
+        token_path = token_temp.name
+
+        print(
+            "Using token from GOOGLE_TOKEN_JSON env"
+        )
+
+        return credentials_path, token_path
+
+    # ====================================
+    # TOKEN FILE FALLBACK
     # ====================================
 
     token_candidates = [
@@ -194,9 +224,17 @@ def authenticate():
 
         if creds and creds.expired and creds.refresh_token:
 
+            print(
+                "Refreshing expired Google token..."
+            )
+
             creds.refresh(Request())
 
         else:
+
+            print(
+                "Running Google OAuth flow..."
+            )
 
             flow = InstalledAppFlow.from_client_secrets_file(
                 credentials_path,
@@ -271,7 +309,7 @@ def normalize_folder_list(
     ]
 
 # ========================================
-# DRIVE QUERY PARSER
+# PARSE DRIVE QUERY
 # ========================================
 
 def parse_drive_folders(
