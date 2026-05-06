@@ -6,7 +6,9 @@ import { parseIntentWithGroq } from "./llm/groqClient.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const servicesDir = path.join(__dirname, "services");
-const PYTHON_BIN = process.env.PYTHON_BIN || "python";
+const PYTHON_BINS = process.env.PYTHON_BIN
+  ? [process.env.PYTHON_BIN]
+  : ["python3", "python", "py"];
 const PYTHON_TIMEOUT_MS = Number(process.env.PYTHON_TIMEOUT_MS || 20000);
 
 export function cleanInput(text) {
@@ -106,11 +108,11 @@ export function parseDriveQuery(query) {
   };
 }
 
-function runPythonService(scriptName, payload, options = {}) {
+function runPythonServiceWithBin(scriptName, payload, pythonBin, options = {}) {
   const reqId = options.reqId || "unknown";
   return new Promise((resolve) => {
     const scriptPath = path.join(servicesDir, scriptName);
-    const child = spawn(PYTHON_BIN, [scriptPath, JSON.stringify(payload)], {
+    const child = spawn(pythonBin, [scriptPath, JSON.stringify(payload)], {
       cwd: path.join(__dirname, ".."),
       env: process.env,
     });
@@ -120,7 +122,7 @@ function runPythonService(scriptName, payload, options = {}) {
     let stdout = "";
     let stderr = "";
 
-    console.log(`[${reqId}] service=${scriptName} spawn bin=${PYTHON_BIN}`);
+    console.log(`[${reqId}] service=${scriptName} spawn bin=${pythonBin}`);
 
     const timeoutRef = setTimeout(() => {
       wasTimedOut = true;
@@ -134,7 +136,8 @@ function runPythonService(scriptName, payload, options = {}) {
         scriptName,
         code: -1,
         stdout: stdout.trim(),
-        stderr: `Failed to spawn '${PYTHON_BIN}': ${err.message}`,
+        stderr: `Failed to spawn '${pythonBin}': ${err.message}`,
+        errorCode: err.code || "",
       });
     });
 
@@ -161,9 +164,31 @@ function runPythonService(scriptName, payload, options = {}) {
         code: exitCode,
         stdout: stdout.trim(),
         stderr: stderr.trim(),
+        errorCode: "",
       });
     });
   });
+}
+
+async function runPythonService(scriptName, payload, options = {}) {
+  let lastResult = null;
+  for (const bin of PYTHON_BINS) {
+    const result = await runPythonServiceWithBin(scriptName, payload, bin, options);
+    if (!(result.code === -1 && result.errorCode === "ENOENT")) {
+      return result;
+    }
+    lastResult = result;
+  }
+
+  const available = PYTHON_BINS.join(", ");
+  return {
+    scriptName,
+    code: -1,
+    stdout: "",
+    stderr:
+      `No Python executable found. Tried: ${available}. ` +
+      "Set PYTHON_BIN in Vercel env or move Python logic to JS/serverless Python functions.",
+  };
 }
 
 export async function processQuery(query, options = {}) {

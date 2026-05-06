@@ -19,7 +19,9 @@ app.use(express.json());
 const frontendDir = path.join(__dirname, "..", "frontend");
 const frontendIndexPath = path.join(frontendDir, "index.html");
 const hasFrontendIndex = fs.existsSync(frontendIndexPath);
-const pythonBin = process.env.PYTHON_BIN || "python";
+const pythonCandidates = process.env.PYTHON_BIN
+  ? [process.env.PYTHON_BIN]
+  : ["python3", "python", "py"];
 
 app.use((req, res, next) => {
   const reqId = crypto.randomUUID().slice(0, 8);
@@ -44,12 +46,20 @@ if (hasFrontendIndex) {
 }
 
 app.get("/health", (_req, res) => {
-  const pythonProbe = spawnSync(pythonBin, ["--version"], {
-    encoding: "utf8",
-    timeout: 5000,
-  });
-  const pythonVersion = (pythonProbe.stdout || pythonProbe.stderr || "").trim();
-  const pythonAvailable = pythonProbe.status === 0 && Boolean(pythonVersion);
+  let detectedBin = null;
+  let detectedVersion = null;
+  for (const bin of pythonCandidates) {
+    const probe = spawnSync(bin, ["--version"], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    const version = (probe.stdout || probe.stderr || "").trim();
+    if (probe.status === 0 && version) {
+      detectedBin = bin;
+      detectedVersion = version;
+      break;
+    }
+  }
 
   return res.status(200).json({
     service: "mcp-backend",
@@ -59,9 +69,10 @@ app.get("/health", (_req, res) => {
       node: process.version,
       isVercel: Boolean(process.env.VERCEL),
       python: {
-        bin: pythonBin,
-        available: pythonAvailable,
-        version: pythonVersion || null,
+        configuredCandidates: pythonCandidates,
+        detectedBin,
+        available: Boolean(detectedBin),
+        version: detectedVersion,
       },
     },
     frontend: {
