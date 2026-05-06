@@ -35,3 +35,5 @@ app.post("/query", async (req, res) => {
 app.listen(config.port, () => {
   console.log(`Server running at http://localhost:${config.port}`);
 });
+
+export default app;
