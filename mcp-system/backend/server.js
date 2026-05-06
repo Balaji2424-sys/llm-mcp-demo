@@ -101,8 +101,12 @@ app.post("/query", async (req, res) => {
   }
 });
 
-app.listen(config.port, () => {
-  console.log(`Server running at http://localhost:${config.port}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(config.port, () => {
+    console.log(`Server running at http://localhost:${config.port}`);
+  });
+} else {
+  console.log("Running in Vercel serverless mode");
+}
 
 export default app;
