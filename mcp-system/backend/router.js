@@ -6,6 +6,8 @@ import { parseIntentWithGroq } from "./llm/groqClient.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const servicesDir = path.join(__dirname, "services");
+const PYTHON_BIN = process.env.PYTHON_BIN || "python";
+const PYTHON_TIMEOUT_MS = Number(process.env.PYTHON_TIMEOUT_MS || 20000);
 
 export function cleanInput(text) {
   return String(text || "")
@@ -104,16 +106,37 @@ export function parseDriveQuery(query) {
   };
 }
 
-function runPythonService(scriptName, payload) {
+function runPythonService(scriptName, payload, options = {}) {
+  const reqId = options.reqId || "unknown";
   return new Promise((resolve) => {
     const scriptPath = path.join(servicesDir, scriptName);
-    const child = spawn("python", [scriptPath, JSON.stringify(payload)], {
+    const child = spawn(PYTHON_BIN, [scriptPath, JSON.stringify(payload)], {
       cwd: path.join(__dirname, ".."),
       env: process.env,
     });
+    const startedAt = Date.now();
+    let wasTimedOut = false;
 
     let stdout = "";
     let stderr = "";
+
+    console.log(`[${reqId}] service=${scriptName} spawn bin=${PYTHON_BIN}`);
+
+    const timeoutRef = setTimeout(() => {
+      wasTimedOut = true;
+      stderr += `\nTimed out after ${PYTHON_TIMEOUT_MS}ms`;
+      child.kill("SIGKILL");
+    }, PYTHON_TIMEOUT_MS);
+
+    child.on("error", (err) => {
+      clearTimeout(timeoutRef);
+      resolve({
+        scriptName,
+        code: -1,
+        stdout: stdout.trim(),
+        stderr: `Failed to spawn '${PYTHON_BIN}': ${err.message}`,
+      });
+    });
 
     child.stdout.on("data", (data) => {
       stdout += data.toString();
@@ -124,13 +147,31 @@ function runPythonService(scriptName, payload) {
     });
 
     child.on("close", (code) => {
-      resolve({ scriptName, code, stdout: stdout.trim(), stderr: stderr.trim() });
+      clearTimeout(timeoutRef);
+      const durationMs = Date.now() - startedAt;
+      const exitCode = wasTimedOut ? -2 : code;
+      console.log(
+        `[${reqId}] service=${scriptName} exit=${exitCode} durationMs=${durationMs}`
+      );
+      if (stderr.trim()) {
+        console.warn(`[${reqId}] service=${scriptName} stderr=${stderr.trim()}`);
+      }
+      resolve({
+        scriptName,
+        code: exitCode,
+        stdout: stdout.trim(),
+        stderr: stderr.trim(),
+      });
     });
   });
 }
 
-export async function processQuery(query) {
+export async function processQuery(query, options = {}) {
+  const reqId = options.reqId || "unknown";
+  const queryStart = Date.now();
+  console.log(`[${reqId}] parse intent started`);
   const intent = await parseIntentWithGroq(query);
+  console.log(`[${reqId}] parse intent completed in ${Date.now() - queryStart}ms`);
 
   if (!intent.platform) {
     throw new Error("Could not detect target platform from query");
@@ -140,7 +181,7 @@ export async function processQuery(query) {
   const runs = [];
 
   if (platform === "github" || platform === "both") {
-    runs.push(await runPythonService("githubServer.py", intent));
+    runs.push(await runPythonService("githubServer.py", intent, { reqId }));
   }
 
   if (platform === "drive" || platform === "both") {
@@ -151,7 +192,7 @@ export async function processQuery(query) {
       folders: driveParsed.folders,
       raw_query: driveParsed.command,
     };
-    runs.push(await runPythonService("driveServer.py", drivePayload));
+    runs.push(await runPythonService("driveServer.py", drivePayload, { reqId }));
   }
 
   if (runs.length === 0) {
